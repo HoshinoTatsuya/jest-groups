@@ -1,0 +1,34 @@
+{
+  "src/assess-tests.ts": {
+    "count": 5,
+    "reason": "TEST_CALLEES, ITERATING_METHODS, FALLBACK_TEST_CALL и FALLBACK_UNKNOWN_REPEAT — словари разбора, по которым assessTests оценивает число тестов и его доказанность; другого читателя у них нет"
+  },
+  "src/bin/jest-assert-no-skipped.ts": {
+    "count": 3,
+    "reason": "точка входа CLI: args, allowPartial и paths — разбор argv в теле скрипта, а не сущности модуля; файл ничего не экспортирует"
+  },
+  "src/constants/exit-code.constant.ts": {
+    "count": 2,
+    "reason": "ExitCode выведен из значений словаря EXIT_CODE (typeof EXIT_CODE[keyof …]) и без него не существует; порознь тип и словарь разошлись бы"
+  },
+  "src/find-skipped-tests.ts": {
+    "count": 2,
+    "reason": "SKIPPED_STATUSES — статусы jest, которые findSkippedTests считает пропуском; это условие функции, а не отдельная настройка"
+  },
+  "src/merge-coverage.ts": {
+    "count": 7,
+    "reason": "sumCounters, sumBranches, DRIVE_LETTER и coverageKey — шаги слияния mergeCoverage; COVERAGE_PATH_PLATFORM и MergeCoverageOptions — её опция платформы путей и форма опций"
+  },
+  "src/merge-reports.ts": {
+    "count": 3,
+    "reason": "CounterKey и COUNTERS — перечень счётчиков отчёта jest, которые суммирует mergeReports; вне слияния не читаются"
+  },
+  "src/types/jest-report.type.ts": {
+    "count": 3,
+    "reason": "JestAssertion и JestSuiteResult — вложенные части формы JestReport (ответ jest --json); отдельно от отчёта они не встречаются"
+  },
+  "src/types/process-runner.type.ts": {
+    "count": 2,
+    "reason": "ProcessResult — тип ответа порта ProcessRunner; порт и его ответ — один контракт, который реализуют spawnProcess и подделки спек"
+  }
+}

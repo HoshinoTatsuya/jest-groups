@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "noEmit": true,
+    "types": ["node"],
+    "paths": {
+      "@hoshinotatsuya/jest-groups": ["./src/index.ts"]
+    }
+  },
+  "include": ["examples"]
+}

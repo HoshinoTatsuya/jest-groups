@@ -1,0 +1,35 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # The pytest-groups spec runs real pytest + pytest-xdist from the package's venv.
+      - run: python3 -m venv .venv && .venv/bin/pip install -q -r requirements-pytest.txt
+      - run: pnpm run typecheck
+      - run: pnpm run lint
+      # Built CLI runs the package's own suite: groups of at most 300 tests, at most 2 workers.
+      - run: pnpm test
+      - run: pnpm run build
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jest-report
+          path: .jest-report.json
+          if-no-files-found: ignore
