@@ -42,9 +42,11 @@ if (process.env.FAKE_HANG && files.includes(process.env.FAKE_HANG)) {
 }
 if (process.env.FAKE_ALLOC_MB) {
   // Тяжёлая спека: память занята и тронута (иначе RSS не растёт), процесс ждёт.
+  // Буфер обязан оставаться достижимым: иначе сборщик мусора освободит его, и на Linux (glibc
+  // возвращает большой блок системе) RSS упадёт раньше замера — тест проверял бы не то.
   const held = Buffer.alloc(Number(process.env.FAKE_ALLOC_MB) * 1024 * 1024, 1);
   log({ event: 'allocated', pid: process.pid, bytes: held.length });
-  setTimeout(() => { log({ event: 'self-exit' }); process.exit(9); }, 20000);
+  setTimeout(() => { log({ event: 'self-exit', bytes: held.length }); process.exit(9); }, 20000);
   return;
 }
 if (process.env.FAKE_LEAK) {
