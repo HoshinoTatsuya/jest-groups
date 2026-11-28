@@ -38,6 +38,28 @@ jobs:
           if [ "$(npm view "${NAME}@${VERSION}" version 2>/dev/null)" = "${VERSION}" ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"; echo "${NAME}@${VERSION} is already on npm"
           fi
+      # npm publish exchanges the GitHub OIDC token for a publish token itself, but when the
+      # exchange is refused it logs the reason only at verbose level and goes on with the
+      # placeholder token, which surfaces as "404 Not Found - PUT". This step does the same
+      # exchange first and prints npm's answer and the token's claims (never the tokens).
+      - name: Check trusted publishing (OIDC exchange)
+        if: steps.published.outputs.skip != 'true'
+        run: |
+          NAME="$(node -p 'require("./package.json").name')"
+          ESCAPED="$(node -p 'process.argv[1].replace("/", "%2f")' "${NAME}")"
+          ID_TOKEN="$(curl -sS -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=npm:registry.npmjs.org" | node -pe 'JSON.parse(require("fs").readFileSync(0, "utf8")).value')"
+          node -e 'const c = JSON.parse(Buffer.from(process.argv[1].split(".")[1], "base64url")); for (const k of ["repository", "repository_owner", "workflow_ref", "job_workflow_ref", "ref", "environment", "event_name"]) console.log(`${k}: ${c[k] ?? "-"}`)' "${ID_TOKEN}"
+          CODE="$(curl -sS -o /tmp/oidc-exchange.json -w '%{http_code}' -X POST \
+            -H "Authorization: Bearer ${ID_TOKEN}" "https://registry.npmjs.org/-/npm/v1/oidc/token/exchange/package/${ESCAPED}")"
+          if [ "${CODE}" != 200 ] && [ "${CODE}" != 201 ]; then
+            echo "OIDC exchange for ${NAME} refused: HTTP ${CODE}"
+            node -e 'const j = JSON.parse(require("fs").readFileSync("/tmp/oidc-exchange.json", "utf8")); delete j.token; console.log(JSON.stringify(j))' || cat /tmp/oidc-exchange.json
+            rm -f /tmp/oidc-exchange.json
+            exit 1
+          fi
+          rm -f /tmp/oidc-exchange.json
+          echo "OIDC exchange for ${NAME}: ok (HTTP ${CODE})"
       # prepublishOnly runs typecheck, the full test suite and the build.
       - if: steps.published.outputs.skip != 'true'
         run: npm publish --provenance --access public
