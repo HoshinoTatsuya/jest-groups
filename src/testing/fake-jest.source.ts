@@ -44,7 +44,16 @@ if (process.env.FAKE_ALLOC_MB) {
   // Тяжёлая спека: память занята и тронута (иначе RSS не растёт), процесс ждёт.
   // Буфер обязан оставаться достижимым: иначе сборщик мусора освободит его, и на Linux (glibc
   // возвращает большой блок системе) RSS упадёт раньше замера — тест проверял бы не то.
+  // И страницы обязаны оставаться горячими: macOS под давлением памяти сжимает или выгружает
+  // нетронутые страницы меньше чем за секунду (замер: 400 МБ буфера — 310 МБ RSS, через
+  // 0,5 с — 43 МБ; с касанием каждой страницы раз в 50 мс — 447 МБ всё время), и потолок
+  // RSS срабатывал только когда опрос успевал поймать первое мгновение.
   const held = Buffer.alloc(Number(process.env.FAKE_ALLOC_MB) * 1024 * 1024, 1);
+  let stamp = 0;
+  setInterval(() => {
+    stamp = (stamp + 1) & 255;
+    for (let page = 0; page < held.length; page += 4096) held[page] = stamp;
+  }, 50);
   log({ event: 'allocated', pid: process.pid, bytes: held.length });
   setTimeout(() => { log({ event: 'self-exit', bytes: held.length }); process.exit(9); }, 20000);
   return;
