@@ -783,7 +783,10 @@ describe('runGroups', () => {
     const collectCalls = () => fake.calls.filter((call) => call.args.includes('--collectTests'));
 
     it('пачки не длиннее бюджета командной строки — как группы', async () => {
-      specs(Object.fromEntries(Array.from({ length: 6 }, (_, index) => [`s${index}.spec.ts`, 2])));
+      // Длинный каталог — чтобы пути не влезли в одну пачку и на системе с коротким tmp (Linux CI).
+      const deep = 'd'.repeat(120);
+      mkdirSync(join(root, deep));
+      specs(Object.fromEntries(Array.from({ length: 6 }, (_, index) => [`${deep}/s${index}.spec.ts`, 2])));
       const budget = 700;
       await runGroups(options({ collectTests: true, argvBudgetBytes: budget }));
       const calls = collectCalls();
