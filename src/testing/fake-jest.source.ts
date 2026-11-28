@@ -48,9 +48,11 @@ if (process.env.FAKE_ALLOC_MB) {
   // нетронутые страницы меньше чем за секунду (замер: 400 МБ буфера — 310 МБ RSS, через
   // 0,5 с — 43 МБ; с касанием каждой страницы раз в 50 мс — 447 МБ всё время), и потолок
   // RSS срабатывал только когда опрос успевал поймать первое мгновение.
+  // FAKE_ALLOC_COLD — страницы тронуты один раз и больше нет: так ведёт себя память, которую
+  // тест занял и забыл, и ровно её macOS под нехваткой памяти сжимает. Потолок обязан видеть и её.
   const held = Buffer.alloc(Number(process.env.FAKE_ALLOC_MB) * 1024 * 1024, 1);
   let stamp = 0;
-  setInterval(() => {
+  if (!process.env.FAKE_ALLOC_COLD) setInterval(() => {
     stamp = (stamp + 1) & 255;
     for (let page = 0; page < held.length; page += 4096) held[page] = stamp;
   }, 50);

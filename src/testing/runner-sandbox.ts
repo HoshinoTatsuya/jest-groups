@@ -90,6 +90,7 @@ export class RunnerSandbox {
       FAKE_LIST_HANG: '',
       FAKE_IGNORE_TERM: '',
       FAKE_ALLOC_MB: '',
+      FAKE_ALLOC_COLD: '',
       FAKE_LEAK: '',
       FAKE_LIST_ESCAPE: '',
       // Спеки не зависят от занятости машины: норма проверяется отдельной спекой.

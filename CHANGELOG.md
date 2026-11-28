@@ -5,6 +5,17 @@ All notable changes to this package are documented here. The format follows
 with the pre-1.0 rule that a minor version may break the API (each such version has a
 **Migration** section).
 
+## [Unreleased]
+
+### Fixed
+- The group memory ceiling (`JEST_GROUP_MAX_RSS_MB`) on macOS now counts the physical footprint
+  of each process (`footprint`: resident, compressed and swapped pages), taking the larger of it
+  and RSS. RSS alone undercounted: under memory pressure macOS compresses pages that are not being
+  touched, and a process holding 400 MB showed 36 MB of RSS half a second later (412 MB of
+  footprint), so a group could fill compressed memory and swap without reaching the ceiling. If
+  `footprint` is missing or does not answer within a second, the sample falls back to RSS. Linux,
+  FreeBSD and OpenBSD are unchanged.
+
 ## [0.8.0] — 2026-11-28
 
 ### Fixed

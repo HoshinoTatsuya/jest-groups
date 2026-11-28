@@ -89,7 +89,7 @@ the pipeline ran and passed is the pipeline's job to check.
 | `JEST_GROUPS_STRICT` | 1 | 0…1 | 1 — a group whose actual test count exceeds the ceiling fails the run (exit 2) after all groups; 0 — a log line only |
 | `JEST_GROUP_TIMEOUT_S` | 1800 | 1…14400 | time ceiling of a group: longer — killed, exit 2 |
 | `JEST_GROUP_KILL_GRACE_S` | 10 | 1…120 | wait after SIGTERM before SIGKILL of the whole group |
-| `JEST_GROUP_MAX_RSS_MB` | ½ of RAM | 64…RAM | ceiling of the summed RSS of the group's processes: above — killed, exit 2 |
+| `JEST_GROUP_MAX_RSS_MB` | ½ of RAM | 64…RAM | ceiling of the summed memory of the group's processes (RSS; physical footprint on macOS): above — killed, exit 2 |
 | `JEST_GROUP_MIN_FREE_MB` | max(1024, 10 % of RAM) | 0… | wait for this much free memory before each group |
 | `JEST_GROUP_MAX_LOAD_PERCENT` | 150 | 10…1000 | wait until the 1-minute load average per core is at most this % |
 | `JEST_GROUP_MACHINE_WAIT_S` | 600 | 1…3600 | how long to wait for the machine: longer — refused "machine overloaded" |
@@ -100,9 +100,13 @@ A value outside its limits is a refusal (exit 2), never "as requested": raising 
 ceiling is exactly what the runner exists to prevent.
 
 Free memory on macOS is `kern.memorystatus_level` (`os.freemem()` counts only empty pages there),
-on Linux the lesser of `MemAvailable` and the cgroup limit. Group memory is the summed RSS of its
-process group (`/proc` on Linux, `ps` on macOS); on Windows the memory ceiling does not apply and
-the runner says so on start. The machine thresholds are a conservative assumption, not a
+on Linux the lesser of `MemAvailable` and the cgroup limit. Group memory is summed over its process
+group: RSS from `/proc` on Linux; on macOS, per process, the larger of RSS and the physical
+footprint from `footprint` (what Activity Monitor shows as Memory: resident plus compressed plus
+swapped pages). RSS alone is not enough there: under memory pressure macOS compresses pages that
+are not being touched, and a process holding 400 MB showed 36 MB of RSS half a second later. If
+`footprint` is missing or does not answer within a second, that sample uses RSS. On Windows the
+memory ceiling does not apply and the runner says so on start. The machine thresholds are a conservative assumption, not a
 measurement of your machine — tune them.
 
 ## Refusals

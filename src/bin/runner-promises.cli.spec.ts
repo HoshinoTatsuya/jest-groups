@@ -201,6 +201,23 @@ describe('потолки группы и защита машины — на на
     expect(box.events().map((entry) => entry.event)).not.toContain('self-exit');
   }, 30_000);
 
+  it('потолок памяти видит и нетронутые страницы (macOS их сжимает, RSS падает)', async () => {
+    // Замер 28.11.2026 на macOS под нехваткой памяти: 400 МБ, которые больше не трогают, через
+    // полсекунды — 36 МБ RSS, и потолок по RSS такую группу пропускал. Сквозная проверка того, что
+    // раннер снимает её по footprint; отличить меры она может только под нехваткой памяти (первый
+    // опрос через секунду бывает раньше сжатия), всегда их отличает спека readGroupRss.
+    const run = box.start({
+      env: { FAKE_ALLOC_MB: '400', FAKE_ALLOC_COLD: '1', JEST_GROUP_MAX_RSS_MB: '200' },
+    });
+    await box.waitFor('allocated');
+    const jest = box.events().find((entry) => entry.event === 'allocated')?.pid ?? 0;
+
+    expect(await run.exited).toBe(2);
+    expect(run.stderr()).toContain('группа 1: снята по потолку памяти 200 МБ (JEST_GROUP_MAX_RSS_MB)');
+    expect(await RunnerSandbox.gone(jest)).toBe(true);
+    expect(box.events().map((entry) => entry.event)).not.toContain('self-exit');
+  }, 30_000);
+
   it('процесс, оставленный тестом, снимается после группы и назван в журнале', async () => {
     const result = box.invoke({ env: { FAKE_LEAK: '1' } });
     const leaked = box.events().find((entry) => entry.event === 'leak')?.pid ?? 0;
