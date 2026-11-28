@@ -5,7 +5,7 @@ All notable changes to this package are documented here. The format follows
 with the pre-1.0 rule that a minor version may break the API (each such version has a
 **Migration** section).
 
-## [Unreleased]
+## [0.8.1] — 2026-11-28
 
 ### Fixed
 - The group memory ceiling (`JEST_GROUP_MAX_RSS_MB`) on macOS now counts the physical footprint

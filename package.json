@@ -1,6 +1,6 @@
 {
   "name": "@hoshinotatsuya/jest-groups",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "description": "Run jest, vitest and pytest suites in sequential groups (at most 300 tests and 2 workers per group) with one merged report, machine protection and a no-skipped-tests check.",
   "keywords": [
     "jest",
