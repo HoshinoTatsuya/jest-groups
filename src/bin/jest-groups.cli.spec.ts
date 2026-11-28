@@ -142,6 +142,25 @@ describe('jest-groups CLI: потолок групп и очерёдность',
       .filter((call) => call.event === 'start')
       .map((call) => (call.files ?? []).map((file) => file.slice(work.length + 1)));
 
+  it('отчёт одного шарда jest-assert-no-skipped не примет за весь набор; --allow-partial и шард 1/1 — примет', () => {
+    const ASSERT = join(__dirname, '..', '..', 'dist', 'bin', 'jest-assert-no-skipped.js');
+    const assert = (...args: string[]) =>
+      spawnSync(process.execPath, [ASSERT, ...args, join(work, 'merged.json')], { encoding: 'utf8' });
+    const counts = { 'a.spec.ts': 3, 'b.spec.ts': 3 };
+
+    const shard = run(counts, {}, true, ['--shard', '1/2']);
+    expect(shard.status).toBe(0);
+    expect(shard.report?.numTotalTests).toBe(3);
+    const rejected = assert();
+    expect(rejected.status).toBe(1);
+    expect(rejected.stderr).toContain('отчёт частичный (shard 1/2)');
+    expect(assert('--allow-partial').status).toBe(0);
+
+    const whole = run(counts, {}, true, ['--shard', '1/1']);
+    expect(whole.report?.numTotalTests).toBe(6);
+    expect(assert().status).toBe(0);
+  });
+
   it('группы не больше плана (285 при потолке 300); файл тяжелее — группой из одного', () => {
     // Фикстура несёт оба случая: файлы, которые ДОЛЖНЫ сложиться в группу
     // (140 + 145 = ровно план), и файлы, которые НЕ должны (146 + 140).

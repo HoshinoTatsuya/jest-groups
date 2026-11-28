@@ -5,6 +5,22 @@ All notable changes to this package are documented here. The format follows
 with the pre-1.0 rule that a minor version may break the API (each such version has a
 **Migration** section).
 
+## [0.8.0] — 2026-11-28
+
+### Fixed
+- A shard report (`--shard i/n` with n > 1) is now marked partial (`jestGroups.partial:
+  "shard i/n"`). Before, `jest-assert-no-skipped` accepted the report of one CI machine as a check
+  of the whole suite. Several reasons are joined by a comma
+  (`changed-since origin/main, shard 1/2`). `--shard 1/1` covers the whole suite: it is not
+  partial, and the merged-coverage threshold is now checked for it.
+
+### Migration
+- A shard job that runs `jest-assert-no-skipped` now fails with "отчёт частичный (shard i/n)". Pass
+  `--allow-partial` there (or `checkReportFile(path, true)`), and check in the pipeline that every
+  shard ran and passed.
+- Code that read `jestGroups.partial` to recognise `--changed-since` or a resume should expect a
+  comma-separated list of reasons.
+
 ## [0.7.3] — 2026-11-21
 
 ### Changed

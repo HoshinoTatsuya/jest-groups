@@ -191,10 +191,36 @@ describe('runGroups', () => {
         await runGroups(options({ shard: { index, count: 3 } }));
         ran.push(...relGroups().flat());
         prints.push(lines.find((line) => line.includes('план '))?.replace(/.* план /, '') ?? '');
-        expect(report().jestGroups).toEqual({ tool: 'jest', groups: 1, shard: `${index}/3` });
+        // Шард — часть набора: без пометки jest-assert-no-skipped принял бы
+        // отчёт одной машины за проверку всего набора.
+        expect(report().jestGroups).toEqual({
+          tool: 'jest',
+          groups: 1,
+          partial: `shard ${index}/3`,
+          shard: `${index}/3`,
+        });
       }
       expect(ran.sort()).toEqual(Object.keys(counts).sort());
       expect(new Set(prints).size).toBe(1);
+    });
+
+    it('шард 1/1 — весь набор: отчёт не частичный', async () => {
+      specs({ 'a.spec.ts': 1, 'b.spec.ts': 1 });
+      await runGroups(options({ shard: { index: 1, count: 1 } }));
+      expect(relGroups().flat().sort()).toEqual(['a.spec.ts', 'b.spec.ts']);
+      const meta = report().jestGroups;
+      expect(meta).toMatchObject({ tool: 'jest', shard: '1/1' });
+      expect(meta).not.toHaveProperty('partial');
+    });
+
+    it('шард вместе с «только изменённым» — в пометке обе причины', async () => {
+      specs({ 'a.spec.ts': 1, 'b.spec.ts': 1 });
+      await runGroups(options({ changedSince: 'origin/main', shard: { index: 1, count: 2 } }));
+      expect(report().jestGroups).toMatchObject({
+        tool: 'jest',
+        partial: 'changed-since origin/main, shard 1/2',
+        shard: '1/2',
+      });
     });
 
     it('шардов больше, чем файлов, и номер за пределом — отказ', async () => {
@@ -650,6 +676,21 @@ describe('runGroups', () => {
       fake.coverageOf = coverage({ [join(root, 'a.spec.ts')]: '/src/a.ts', '/никем': '/src/b.ts' });
       await runGroups(options({ mergeCoverageTo: join(root, 'cov', 'c.json'), changedSince: 'main' }));
       expect(lines).toContain('[группы jest] порог покрытия не сверяется: прогон покрыл не весь набор');
+    });
+
+    it('шард из двух видит 50 % — порог не сверяется; шард 1/1 — весь набор, порог сверяется', async () => {
+      fake.threshold = { global: { lines: 90 } };
+      fake.coverageOf = coverage({ [join(root, 'a.spec.ts')]: '/src/a.ts', '/никем': '/src/b.ts' });
+      await runGroups(
+        options({ mergeCoverageTo: join(root, 'cov', 'c.json'), shard: { index: 1, count: 2 } }),
+      );
+      expect(lines).toContain('[группы jest] порог покрытия не сверяется: прогон покрыл не весь набор');
+
+      const error = await failure(
+        runGroups(options({ mergeCoverageTo: join(root, 'cov', 'c.json'), shard: { index: 1, count: 1 } })),
+      );
+      expect(error.exitCode).toBe(1);
+      expect(error.message).toContain('threshold (90%)');
     });
   });
 });

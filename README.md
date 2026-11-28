@@ -73,8 +73,11 @@ Runner flags (before `--`; an unknown flag is refused):
 | `--from-group <N>` | resume the previous full run of this command from group N (same plan) |
 | `--failed-only` | resume: only failed and not-started groups of the previous run |
 
-A resumed or `--changed-since` report is marked partial (`jestGroups.partial`): `jest-assert-no-skipped`
-rejects it without `--allow-partial`, so a fast run never looks like a check of the whole suite.
+A resumed, `--changed-since` or shard report (`--shard i/n` with n > 1) is marked partial
+(`jestGroups.partial`, reasons joined by a comma, e.g. `changed-since origin/main, shard 1/2`):
+`jest-assert-no-skipped` rejects it without `--allow-partial`, so a fast run or one CI machine never
+looks like a check of the whole suite. On a shard job pass `--allow-partial`; that every shard of
+the pipeline ran and passed is the pipeline's job to check.
 
 ## Environment variables
 

@@ -193,14 +193,19 @@ export const runGroups = async (options: RunGroupsOptions): Promise<void> => {
     ...(partial === undefined ? {} : { partial }),
     ...(options.shard === undefined ? {} : { shard: `${options.shard.index}/${options.shard.count}` }),
   });
-  const partialReason =
-    options.changedSince !== undefined
-      ? `changed-since ${options.changedSince}`
-      : resume !== undefined
-        ? resume.fromGroup !== undefined
-          ? `from-group ${resume.fromGroup}`
-          : 'failed-only'
-        : undefined;
+  // Всё, из-за чего отчёт покрывает не всю выборку команды. Шард — тоже часть:
+  // без пометки jest-assert-no-skipped принял бы отчёт одной машины CI за
+  // проверку всего набора. Шард 1/1 — весь набор, он не частичный.
+  const partialParts = [
+    ...(options.changedSince === undefined ? [] : [`changed-since ${options.changedSince}`]),
+    ...(resume === undefined
+      ? []
+      : [resume.fromGroup !== undefined ? `from-group ${resume.fromGroup}` : 'failed-only']),
+    ...(options.shard === undefined || options.shard.count === 1
+      ? []
+      : [`shard ${options.shard.index}/${options.shard.count}`]),
+  ];
+  const partialReason = partialParts.length === 0 ? undefined : partialParts.join(', ');
   /** Пустой частичный прогон («изменённых спек нет») — отчёт без тестов с пометкой, код 0. */
   const writeEmpty = (why: string): void => {
     log(`${label} ${why} — гнать нечего`);
@@ -674,8 +679,7 @@ export const runGroups = async (options: RunGroupsOptions): Promise<void> => {
   if (options.mergeCoverageTo !== undefined && coverages.length > 0) {
     const coverage = mergeCoverage(coverages);
     writeAtomically(resolve(options.mergeCoverageTo), JSON.stringify(coverage));
-    const complete =
-      reports.length === runIndices.length && partialReason === undefined && options.shard === undefined;
+    const complete = reports.length === runIndices.length && partialReason === undefined;
     if (threshold !== null && complete) {
       thresholdErrors = checkCoverageThreshold(coverage, threshold, root, jestVersion);
     } else if (threshold !== null) {
