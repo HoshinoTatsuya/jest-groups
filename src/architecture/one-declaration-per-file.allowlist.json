@@ -1,7 +1,7 @@
 {
   "src/assess-tests.ts": {
-    "count": 5,
-    "reason": "TEST_CALLEES, ITERATING_METHODS, FALLBACK_TEST_CALL и FALLBACK_UNKNOWN_REPEAT — словари разбора, по которым assessTests оценивает число тестов и его доказанность; другого читателя у них нет"
+    "count": 4,
+    "reason": "TEST_CALLEES, ITERATING_METHODS и FALLBACK_TEST_CALL — словари разбора, по которым assessTests оценивает число тестов и его доказанность; другого читателя у них нет"
   },
   "src/bin/jest-assert-no-skipped.ts": {
     "count": 3,

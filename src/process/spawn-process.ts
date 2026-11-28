@@ -8,7 +8,8 @@ import { buildSpawnCommand } from './build-spawn-command';
 import { isProcessGroupAlive } from './is-process-group-alive';
 import { LIVE_PROCESS_GROUPS } from './live-process-groups';
 import { readGroupRss } from './read-group-rss';
-import { signalProcessGroup } from './signal-process-group';
+import { RUNNER_WATCHDOG } from './runner-watchdog';
+import { signalGroupQuietly } from './signal-group-quietly';
 
 /**
  * Настоящий запуск процесса: своя группа процессов (`detached`), и всё, что
@@ -67,7 +68,7 @@ export const spawnProcess: ProcessRunner = (executable, args, mode, options = {}
 
     const signalGroup = (signal: NodeJS.Signals): void => {
       if (pid !== undefined) {
-        signalProcessGroup(pid, signal);
+        signalGroupQuietly(pid, signal);
       }
     };
     const stop = (why: ProcessOutcome, signal: NodeJS.Signals): void => {
@@ -86,6 +87,10 @@ export const spawnProcess: ProcessRunner = (executable, args, mode, options = {}
 
     if (pid !== undefined) {
       LIVE_PROCESS_GROUPS.add(pid);
+      if (!windows) {
+        // Раннер, убитый SIGKILL, группу уже не снимет — её снимет сторож.
+        RUNNER_WATCHDOG.watch(pid, graceMs);
+      }
     }
     options.signal?.addEventListener('abort', onAbort, { once: true });
     if (options.signal?.aborted) {
@@ -125,6 +130,7 @@ export const spawnProcess: ProcessRunner = (executable, args, mode, options = {}
       options.signal?.removeEventListener('abort', onAbort);
       if (pid !== undefined) {
         LIVE_PROCESS_GROUPS.delete(pid);
+        RUNNER_WATCHDOG.unwatch(pid);
       }
     };
     const pause = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));

@@ -1,7 +1,7 @@
 import { EXIT_CODE } from '../constants/exit-code.constant';
 import { JestGroupsError } from '../jest-groups.error';
 import { LIVE_PROCESS_GROUPS } from '../process/live-process-groups';
-import { signalProcessGroup } from '../process/signal-process-group';
+import { signalGroupQuietly } from '../process/signal-group-quietly';
 import { spawnProcess } from '../process/spawn-process';
 import { runGroups } from '../run-groups';
 import type { ToolName } from '../types/tool-name.type';
@@ -27,6 +27,7 @@ export const runCli = (tool: ToolName, argv: readonly string[]): void => {
   const usage =
     `использование: ${tool}-groups --out <отчёт.json> [--dry-run] [--merge-coverage <coverage-final.json>] ` +
     '[--junit <отчёт.xml>] [--changed-since <ref>] [--shard <i>/<n>] [--from-group <N> | --failed-only] ' +
+    '[--collect-tests] ' +
     `-- <команда ${tool}>`;
   const controller = new AbortController();
   for (const name of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) {
@@ -37,14 +38,14 @@ export const runCli = (tool: ToolName, argv: readonly string[]): void => {
         return;
       }
       for (const pid of LIVE_PROCESS_GROUPS) {
-        signalProcessGroup(pid, 'SIGKILL');
+        signalGroupQuietly(pid, 'SIGKILL');
       }
     });
   }
   // Выход раннера по любой причине не оставляет запущенных групп.
   process.on('exit', () => {
     for (const pid of LIVE_PROCESS_GROUPS) {
-      signalProcessGroup(pid, 'SIGKILL');
+      signalGroupQuietly(pid, 'SIGKILL');
     }
   });
   const main = async (): Promise<void> => {
@@ -77,6 +78,7 @@ export const runCli = (tool: ToolName, argv: readonly string[]): void => {
       ...(args.junitTo === undefined ? {} : { junitTo: args.junitTo }),
       ...(args.changedSince === undefined ? {} : { changedSince: args.changedSince }),
       ...(args.shard === undefined ? {} : { shard: args.shard }),
+      ...(args.collectTests ? { collectTests: true } : {}),
       ...(args.fromGroup === undefined && !args.failedOnly
         ? {}
         : { resume: args.fromGroup === undefined ? { failedOnly: true } : { fromGroup: args.fromGroup } }),

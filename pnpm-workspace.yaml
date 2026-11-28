@@ -3,6 +3,8 @@
 # of the same author are installed right after they are published.
 packages:
   - '.'
+  # vitest 5 with its own coverage provider for the vitest-groups specs (see its package.json).
+  - 'test-deps/vitest-5'
 allowBuilds:
   # Native file watcher of jest-haste-map (jest 30.5+, --watch mode). Prebuilt binaries ship in the
   # optional @parcel/watcher-<platform> packages; the install script only builds from source with

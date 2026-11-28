@@ -1,5 +1,6 @@
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   realpathSync,
@@ -9,13 +10,15 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import { cacheKey } from './cache/cache-key';
 import { JestGroupsError } from './jest-groups.error';
+import { mergeShardReports } from './merge-shard-reports';
 import { runGroups } from './run-groups';
 import { FakeToolRunner } from './testing/fake-tool-runner';
 import type { MachineLoad } from './types/machine-load.type';
+import type { ProcessResult, ProcessRunner } from './types/process-runner.type';
 import type { RunGroupsOptions } from './types/run-groups-options.type';
 
 /**
@@ -174,6 +177,27 @@ describe('runGroups', () => {
       });
       expect((await failure(runGroups(options()))).message).toContain('пуста');
     });
+
+    it('изменённых нет, шарды: у каждого пустая раскладка — jest-groups-merge склеит их в пустой частичный', async () => {
+      specs({});
+      const shards = [];
+      for (const index of [1, 2]) {
+        await runGroups(options({ changedSince: 'HEAD', shard: { index, count: 2 } }));
+        shards.push({ path: `shard-${index}`, report: report() as never });
+      }
+      const metas = shards.map(
+        (shard) => (shard.report as { jestGroups: Record<string, unknown> }).jestGroups,
+      );
+      expect(metas[0]).toMatchObject({ shard: '1/2', files: [], partial: 'changed-since HEAD, shard 1/2' });
+      expect(typeof metas[0]?.plan).toBe('string');
+      expect(metas[0]?.plan).toBe(metas[1]?.plan);
+      expect(mergeShardReports(shards).jestGroups).toEqual({
+        tool: 'jest',
+        groups: 0,
+        shards: 2,
+        partial: 'changed-since HEAD',
+      });
+    });
   });
 
   describe('шардирование', () => {
@@ -189,15 +213,20 @@ describe('runGroups', () => {
         fake.reset();
         lines = [];
         await runGroups(options({ shard: { index, count: 3 } }));
-        ran.push(...relGroups().flat());
+        const shardFiles = relGroups().flat().sort();
+        ran.push(...shardFiles);
         prints.push(lines.find((line) => line.includes('план '))?.replace(/.* план /, '') ?? '');
         // Шард — часть набора: без пометки jest-assert-no-skipped принял бы
         // отчёт одной машины за проверку всего набора.
+        // Отпечаток плана и файлы шарда — для jest-groups-merge.
+        const print = lines.find((line) => line.includes('план '))?.replace(/.* план /, '');
         expect(report().jestGroups).toEqual({
           tool: 'jest',
           groups: 1,
           partial: `shard ${index}/3`,
           shard: `${index}/3`,
+          plan: print,
+          files: shardFiles,
         });
       }
       expect(ran.sort()).toEqual(Object.keys(counts).sort());
@@ -691,6 +720,111 @@ describe('runGroups', () => {
       );
       expect(error.exitCode).toBe(1);
       expect(error.message).toContain('threshold (90%)');
+    });
+  });
+
+  describe('слияние покрытия vitest (--merge-reports)', () => {
+    /** Поддельный vitest: выборка, группа (отчёт и blob), слияние — по заданному исходу. */
+    const vitest =
+      (merge: ProcessResult): ProcessRunner =>
+      async (_executable, args) => {
+        const value = (prefix: string) => args.find((arg) => arg.startsWith(prefix))?.slice(prefix.length);
+        if (args.includes('list')) {
+          return { status: 0, stdout: JSON.stringify([{ file: join(root, 'a.test.js') }]) };
+        }
+        if (args.some((arg) => arg.startsWith('--merge-reports='))) {
+          const dir = value('--coverage.reportsDirectory=') ?? '';
+          mkdirSync(dir, { recursive: true });
+          writeFileSync(join(dir, 'coverage-final.json'), '{}');
+          writeFileSync(
+            value('--outputFile.json=') ?? '',
+            JSON.stringify({ success: true, testResults: [] }),
+          );
+          return merge;
+        }
+        const blob = value('--outputFile.blob=') ?? '';
+        mkdirSync(dirname(blob), { recursive: true });
+        writeFileSync(blob, 'blob');
+        writeFileSync(
+          value('--outputFile.json=') ?? '',
+          JSON.stringify({
+            success: true,
+            numTotalTests: 1,
+            testResults: [
+              { name: join(root, 'a.test.js'), assertionResults: [{ status: 'passed', fullName: 'a' }] },
+            ],
+          }),
+        );
+        return { status: 0, stdout: '', outcome: 'exited' };
+      };
+    const runVitest = (merge: ProcessResult) => {
+      writeFileSync(join(root, 'a.test.js'), "it('a', f);\n");
+      return runGroups(
+        options({ tool: 'vitest', run: vitest(merge), mergeCoverageTo: join(root, 'cov', 'c.json') }),
+      );
+    };
+
+    it('слияние снято по потолку времени — отказ раннера с причиной, а не «порог не выполнен»', async () => {
+      const error = await failure(runVitest({ status: null, stdout: '', outcome: 'timeout' }));
+      expect(error.exitCode).toBe(2);
+      expect(error.message).toContain('слияние покрытия (vitest --merge-reports) снято по потолку времени');
+    });
+
+    it('код 1 при зелёных тестах — порог не выполнен (код 1); код 0 — покрытие записано', async () => {
+      const failed = await failure(runVitest({ status: 1, stdout: '', outcome: 'exited' }));
+      expect(failed.exitCode).toBe(1);
+      expect(failed.message).toContain('порог покрытия не выполнен');
+      await runVitest({ status: 0, stdout: '', outcome: 'exited' });
+      expect(existsSync(join(root, 'cov', 'c.json'))).toBe(true);
+    });
+  });
+
+  describe('подсчёт без выполнения (--collect-tests)', () => {
+    const collectCalls = () => fake.calls.filter((call) => call.args.includes('--collectTests'));
+
+    it('пачки не длиннее бюджета командной строки — как группы', async () => {
+      specs(Object.fromEntries(Array.from({ length: 6 }, (_, index) => [`s${index}.spec.ts`, 2])));
+      const budget = 700;
+      await runGroups(options({ collectTests: true, argvBudgetBytes: budget }));
+      const calls = collectCalls();
+      expect(calls.length).toBeGreaterThan(1);
+      for (const call of calls) {
+        const bytes = ['jest', ...call.args].reduce((total, arg) => total + Buffer.byteLength(arg) + 1, 0);
+        expect(bytes).toBeLessThanOrEqual(budget);
+      }
+      expect(
+        calls.flatMap((call) => call.args.slice(call.args.indexOf('--runTestsByPath') + 1)),
+      ).toHaveLength(6);
+    });
+
+    it('подсчёт не собирает покрытие: флаги покрытия команды сняты, --coverage=false', async () => {
+      specs({ 'a.spec.ts': 2 });
+      fake.coverageOf = () => ({});
+      await runGroups(
+        options({
+          collectTests: true,
+          command: ['jest', '--coverage', '--coverageThreshold={"global":{"lines":1}}'],
+          mergeCoverageTo: join(root, 'cov', 'c.json'),
+        }),
+      );
+      const [call] = collectCalls();
+      expect(call?.args).toContain('--coverage=false');
+      expect(call?.args).not.toContain('--coverage');
+      expect(call?.args.some((arg) => arg.startsWith('--coverageThreshold'))).toBe(false);
+    });
+
+    it('пробный прогон файлы не загружает: подсчёт пропущен, и это названо', async () => {
+      specs({ 'a.spec.ts': 2 });
+      await runGroups(options({ collectTests: true, dryRun: true }));
+      expect(collectCalls()).toEqual([]);
+      expect(lines.join('\n')).toContain('подсчёт без выполнения (--collect-tests) пропущен');
+    });
+
+    it('подсчёт снят по потолку времени — причина названа, план прежний', async () => {
+      specs({ 'a.spec.ts': 2 });
+      fake.outcomes.set(1, 'timeout');
+      await runGroups(options({ collectTests: true }));
+      expect(lines.join('\n')).toContain('подсчёт без выполнения не удался: снят по потолку времени');
     });
   });
 });

@@ -11,4 +11,13 @@ export interface ReportMeta {
   readonly groups: number;
   readonly partial?: string;
   readonly shard?: string;
+  /**
+   * Шард (`--shard i/n`): отпечаток раскладки ВСЕХ шардов (одинаков на каждой машине при той же
+   * выборке) и файлы этого шарда относительно корня проекта — по ним `jest-groups-merge`
+   * проверяет, что отчёты шардов складываются в весь набор ровно по разу.
+   */
+  readonly plan?: string;
+  readonly files?: readonly string[];
+  /** Отчёт `jest-groups-merge`: из скольких шардов он склеен. */
+  readonly shards?: number;
 }

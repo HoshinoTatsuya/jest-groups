@@ -2,6 +2,7 @@ import { JestGroupsError } from '../jest-groups.error';
 import type { MachineGate } from '../types/machine-gate.type';
 import type { MachineLoad } from '../types/machine-load.type';
 import { describeOverload } from './describe-overload';
+import { readMemoryBudget } from './read-memory-budget';
 import { waitForMachine } from './wait-for-machine';
 
 const GB = 1024 ** 3;
@@ -95,5 +96,22 @@ describe('waitForMachine', () => {
     );
     await expect(waiting).resolves.toBe(2_000);
     expect(machine.probes()).toBe(1);
+  });
+});
+
+describe('readMemoryBudget', () => {
+  it('предел cgroup меньше памяти машины — он и есть память раннера', () => {
+    expect(readMemoryBudget(64 * GB, 4 * GB)).toEqual({ bytes: 4 * GB, source: 'cgroup' });
+  });
+
+  it.each([
+    ['предела нет (0)', 0],
+    ['cgroup «max» (огромное число)', 2 ** 64],
+    ['предел равен памяти машины', 16 * GB],
+    ['предел больше памяти машины', 32 * GB],
+    ['непонятное значение', Number.NaN],
+    ['отрицательное', -1],
+  ])('%s — физическая память машины', (_, constrained) => {
+    expect(readMemoryBudget(16 * GB, constrained)).toEqual({ bytes: 16 * GB, source: 'machine' });
   });
 });

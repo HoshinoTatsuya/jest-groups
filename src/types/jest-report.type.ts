@@ -6,6 +6,8 @@ export interface JestAssertion {
 
 export interface JestSuiteResult {
   readonly name: string;
+  /** `passed` / `failed` (файл не загрузился или упал). */
+  readonly status?: string;
   readonly assertionResults?: readonly JestAssertion[];
 }
 

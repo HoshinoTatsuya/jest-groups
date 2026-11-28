@@ -15,7 +15,7 @@ export const parseRunnerArgs = (argv: readonly string[], usage: string): RunnerA
   const valued = new Map<string, string>();
   const switches = new Set<string>();
   const VALUED = ['--out', '--merge-coverage', '--junit', '--changed-since', '--shard', '--from-group'];
-  const SWITCHES = ['--dry-run', '--failed-only'];
+  const SWITCHES = ['--dry-run', '--failed-only', '--collect-tests'];
   for (let index = 0; index < flags.length; index++) {
     const flag = flags[index] ?? '';
     const [name = '', inline] = flag.startsWith('--') && flag.includes('=') ? flag.split(/=(.*)/s) : [flag];
@@ -54,6 +54,7 @@ export const parseRunnerArgs = (argv: readonly string[], usage: string): RunnerA
     out,
     dryRun: switches.has('--dry-run'),
     failedOnly: switches.has('--failed-only'),
+    collectTests: switches.has('--collect-tests'),
     command: argv.slice(separator + 1),
     ...(mergeCoverageTo === undefined ? {} : { mergeCoverageTo }),
     ...(junitTo === undefined ? {} : { junitTo }),

@@ -5,6 +5,59 @@ All notable changes to this package are documented here. The format follows
 with the pre-1.0 rule that a minor version may break the API (each such version has a
 **Migration** section).
 
+## [0.9.0] — 2026-11-28
+
+### Added
+- `jest-groups-merge` merges the reports of all CI shards into a report of the whole suite
+  (`mergeShardReports` in the API). It refuses (exit 2) when a shard is missing or given twice, the
+  shards come from different layouts, tools or shard counts, or a file is listed in two shards;
+  when the shards have no partial reason other than the shard itself, the merged report passes
+  `jest-assert-no-skipped` without `--allow-partial`. For jest shards it also
+  merges coverage and checks the project's `coverageThreshold` on the merged data
+  (`--merge-coverage … --coverage … -- <jest command>`; a coverage file given twice is refused).
+  Shard reports now carry the layout fingerprint (spec files and their estimated counts, not the
+  code version) and their files (`jestGroups.plan`, `jestGroups.files`); an empty
+  `--changed-since` shard has an empty layout and merges. Coverage thresholds of sharded vitest
+  suites are not supported.
+- `vitest-groups --merge-coverage`: every group writes a blob report with coverage and with
+  thresholds off, and `vitest run --merge-reports` merges them and checks the config's thresholds
+  on the merged coverage with vitest's own text; a merge killed by a ceiling is a runner refusal
+  (exit 2), not a threshold failure. Before, coverage merging was refused for vitest.
+- `--collect-tests` (jest 30.4+): files without history whose count the text does not prove are
+  counted with `jest --collectTests` before the plan instead of getting a whole group each. As in a
+  real run the test environment, `setupFiles` and `setupFilesAfterEnv` run and the specs are
+  loaded; `globalSetup`, test bodies and hooks do not, and no coverage is collected. Launches stay
+  within the command-line budget; skipped with `--dry-run`.
+- A watchdog process stops the runner's groups when the runner itself is killed with SIGKILL (until
+  now a documented limit: the jest group kept running).
+
+### Fixed
+- The default group memory ceiling (`JEST_GROUP_MAX_RSS_MB`) and free-memory threshold
+  (`JEST_GROUP_MIN_FREE_MB`) are computed from the cgroup limit when one is set
+  (`readMemoryBudget`), not from the host's RAM: in a 4 GB container on a 64 GB host the ceiling
+  was 32 GB (the container was OOM-killed first) and the free-memory threshold 6.4 GB (never
+  reached, so the runner waited until "machine overloaded"). Under a cgroup limit the default
+  free-memory threshold is also at most a quarter of the limit (1 GB in a 1 GB container was never
+  reached either).
+- A report in which a sampled file ran twice, outside its group or not at all is deleted together
+  with JUnit and coverage when the runner refuses (exit 2): with `success: true` it could otherwise
+  be merged by `jest-groups-merge` as a complete shard.
+- Without TypeScript, a spec file with a test call inside a loop (`for`, `while`, `do`,
+  `forEach`/`map`/`flatMap`) is "not proven" for the plan: the regular expression counted a test in
+  a loop as one proven test (a file of 7 tests was planned as 2). A loop inside a test body
+  (`expect(rows.map(f))`) still counts as proven.
+- On macOS, cleanup of a group that holds only zombies (`kill(-pgid)` answers EPERM) no longer
+  fails the run with exit 1 instead of 128 + signal.
+
+### Migration
+- In a container or CI job with a memory limit the default ceilings are lower than before; set
+  `JEST_GROUP_MAX_RSS_MB` / `JEST_GROUP_MIN_FREE_MB` explicitly if a group legitimately needs more.
+- `--collectTests` in the jest command is refused (the runner sets it itself with
+  `--collect-tests`).
+- A refused run (a file ran twice, outside its group or not at all) no longer leaves its report:
+  steps that read the report after exit 2 find none.
+- Code that compared a shard report's `jestGroups` exactly should expect `plan` and `files`.
+
 ## [0.8.1] — 2026-11-28
 
 ### Fixed

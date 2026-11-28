@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync } from 'node:fs';
 import { platform as osPlatform, tmpdir } from 'node:os';
 import { join, relative, resolve } from 'node:path';
 import { assessTests } from './assess-tests';
@@ -36,6 +36,7 @@ import { toJunitXml } from './to-junit-xml';
 import { findOwnedFlags } from './tools/find-owned-flags';
 import { parseShowConfigOutput } from './tools/parse-show-config-output';
 import { TOOLS } from './tools/tools.constant';
+import { withoutFlag } from './tools/without-flag';
 import type { Estimator } from './types/estimator.type';
 import type { FileCoverage } from './types/file-coverage.type';
 import type { FileStamp } from './types/file-stamp.type';
@@ -72,9 +73,10 @@ export const runGroups = async (options: RunGroupsOptions): Promise<void> => {
         `(число воркеров — переменная ${ENV_NAMES.WORKERS}, не больше 2)`,
     );
   }
-  if (options.mergeCoverageTo !== undefined && !tool.mergesCoverage) {
+  const coverageMerge = tool.coverageMerge;
+  if (options.mergeCoverageTo !== undefined && coverageMerge === null) {
     throw new JestGroupsError(
-      `--merge-coverage для ${tool.name} не поддержан: слияние покрытия — только jest`,
+      `--merge-coverage для ${tool.name} не поддержан: слияние покрытия — только jest и vitest`,
     );
   }
   // Каждая группа — свой процесс, и с общим coverageDirectory следующая
@@ -87,6 +89,11 @@ export const runGroups = async (options: RunGroupsOptions): Promise<void> => {
     );
   }
   const resume = options.resume;
+  if (options.collectTests === true && tool.name !== 'jest') {
+    throw new JestGroupsError(
+      `--collect-tests для ${tool.name} не поддержан: подсчёт без выполнения — jest 30.4+`,
+    );
+  }
   if (options.changedSince !== undefined && !tool.supportsChangedSince) {
     throw new JestGroupsError(
       `--changed-since для ${tool.name} не поддержан: сам инструмент «только изменённое» не умеет`,
@@ -187,11 +194,14 @@ export const runGroups = async (options: RunGroupsOptions): Promise<void> => {
       );
     }
   }
+  /** Раскладка шардов — для пометки отчёта (`jest-groups-merge` сверяет по ней полноту). */
+  let shardPlan: { readonly fingerprint: string; readonly files: readonly string[] } | undefined;
   const meta = (groups: number, partial?: string): ReportMeta => ({
     tool: tool.name,
     groups,
     ...(partial === undefined ? {} : { partial }),
     ...(options.shard === undefined ? {} : { shard: `${options.shard.index}/${options.shard.count}` }),
+    ...(shardPlan === undefined ? {} : { plan: shardPlan.fingerprint, files: shardPlan.files }),
   });
   // Всё, из-за чего отчёт покрывает не всю выборку команды. Шард — тоже часть:
   // без пометки jest-assert-no-skipped принял бы отчёт одной машины CI за
@@ -227,6 +237,17 @@ export const runGroups = async (options: RunGroupsOptions): Promise<void> => {
   // явное «только изменённое»: там пусто значит «ничего не менялось».
   if (files.length === 0) {
     if (options.changedSince !== undefined) {
+      if (options.shard !== undefined) {
+        // Пустая выборка — раскладка из пустых шардов, одинаковая на каждой машине: без неё
+        // jest-groups-merge отказывал бы пустым шардам «отчёт версии до 0.9.0».
+        shardPlan = {
+          fingerprint: createHash('sha256')
+            .update(JSON.stringify(Array.from({ length: options.shard.count }, () => [])))
+            .digest('hex')
+            .slice(0, 12),
+          files: [],
+        };
+      }
       writeEmpty(`изменённых с ${options.changedSince} спек нет`);
       return;
     }
@@ -266,6 +287,7 @@ export const runGroups = async (options: RunGroupsOptions): Promise<void> => {
       .digest('hex')
       .slice(0, 12);
     log(`${label} шард ${index}/${count}: файлов ${selected.length} из ${files.length}, план ${fingerprint}`);
+    shardPlan = { fingerprint, files: [...selected] };
     if (selected.length === 0) {
       throw new JestGroupsError(
         `шард ${index}/${count} пуст: файлов спек (${files.length}) меньше, чем шардов — уменьшите число машин`,
@@ -289,13 +311,112 @@ export const runGroups = async (options: RunGroupsOptions): Promise<void> => {
   const knownTests = known.reduce((total, item) => total + item.tests, 0);
   const msPerTest = knownTests > 0 ? known.reduce((total, item) => total + item.ms, 0) / knownTests : 0;
   const cap = planCap(options.maxTests);
+  // Файлы без истории, чьё число текст не доказывает, считает сам jest (`--collectTests`):
+  // иначе каждый идёт полной группой — лишний старт jest на файл и, если текст обманул,
+  // превышение потолка на первом прогоне. Подсчёт — оптимизация плана, а не контроль: не
+  // посчитал (jest до 30.4, файл не загрузился) — прежний план, и это названо в журнале.
+  const collected = new Map<string, number>();
+  if (options.collectTests === true && options.dryRun) {
+    log(`${label} пробный прогон файлы не загружает: подсчёт без выполнения (--collect-tests) пропущен`);
+  } else if (options.collectTests === true) {
+    const unproven = selected.filter((file) => cacheFiles[file] === undefined && !assessOf(file).certain);
+    // Подсчёт не собирает покрытие: флаги покрытия команды и конфига (collectCoverage) иначе
+    // писали бы покрытие подсчёта (тела тестов не выполнены) в каталог покрытия проекта.
+    const collectArgs = (out: string): string[] => [
+      ...withoutFlag(baseArgs, 'coverageThreshold').filter((arg) => !tool.coverageFlag.test(arg)),
+      '--collectTests',
+      '--coverage=false',
+      '--silent',
+      '--json',
+      `--outputFile=${out}`,
+      `--maxWorkers=${options.workers}`,
+      '--runTestsByPath',
+    ];
+    const argvBytes = (arg: string): number => Buffer.byteLength(arg) + 1;
+    const budget =
+      options.argvBudgetBytes ??
+      (osPlatform() === 'win32'
+        ? GROUP_DEFAULTS.ARGV_BUDGET_BYTES.win32
+        : GROUP_DEFAULTS.ARGV_BUDGET_BYTES.other);
+    const scratch = unproven.length > 0 ? mkdtempSync(join(tmpdir(), 'jest-groups-collect-')) : null;
+    const fixed = [executable, ...collectArgs(join(scratch ?? tmpdir(), 'collect-000000.json'))]
+      .map(argvBytes)
+      .reduce((total, length) => total + length, 0);
+    // Пачки — не больше COLLECT_BATCH_FILES файлов и не длиннее бюджета командной строки (тот же,
+    // что у групп: на Windows сотня путей длиннее предела cmd.exe).
+    const batches = splitByArgvBudget(
+      Array.from({ length: Math.ceil(unproven.length / GROUP_DEFAULTS.COLLECT_BATCH_FILES) }, (_, index) =>
+        unproven.slice(
+          index * GROUP_DEFAULTS.COLLECT_BATCH_FILES,
+          (index + 1) * GROUP_DEFAULTS.COLLECT_BATCH_FILES,
+        ),
+      ),
+      budget,
+      fixed,
+      (file) => argvBytes(resolve(root, file)),
+    );
+    try {
+      for (const [number, batch] of batches.entries()) {
+        if (scratch === null) {
+          break;
+        }
+        if (options.machine !== undefined) {
+          await waitForMachine(options.machine, log, options.signal);
+        }
+        const out = join(scratch, `collect-${number}.json`);
+        const counted = await run(
+          executable,
+          [...collectArgs(out), ...batch.map((file) => resolve(root, file))],
+          'capture',
+          {
+            ...processBase,
+            ...(limits.timeoutMs === undefined ? {} : { timeoutMs: limits.timeoutMs }),
+            ...(limits.maxRssBytes === undefined ? {} : { maxRssBytes: limits.maxRssBytes }),
+          },
+        );
+        if (options.signal?.aborted) {
+          throw interruptedError('во время подсчёта тестов');
+        }
+        const read = readJsonFile<JestReport>(out);
+        if (read.kind !== JSON_FILE_READ.ok) {
+          const why =
+            counted.outcome === PROCESS_OUTCOME.timeout
+              ? `снят по потолку времени (${ENV_NAMES.TIMEOUT})`
+              : counted.outcome === PROCESS_OUTCOME.memory
+                ? `снят по потолку памяти (${ENV_NAMES.MAX_RSS})`
+                : `jest не записал отчёт подсчёта (код ${counted.status}; --collectTests — с jest 30.4)`;
+          log(`${label} подсчёт без выполнения не удался: ${why} — оставшиеся файлы идут прежним планом`);
+          break;
+        }
+        for (const suite of read.value.testResults ?? []) {
+          const tests = (suite.assertionResults ?? []).length;
+          if (suite.status !== 'failed' && tests > 0) {
+            const file = relative(root, realPath(suite.name));
+            collected.set(file, (collected.get(file) ?? 0) + tests);
+          }
+        }
+      }
+    } finally {
+      if (scratch !== null) {
+        rmSync(scratch, { recursive: true, force: true });
+      }
+    }
+    if (unproven.length > 0) {
+      log(
+        `${label} без выполнения сосчитаны тесты файлов: ${collected.size} из ${unproven.length} без доказанного числа`,
+      );
+    }
+  }
   // Оценка того же содержимого, что даст факт этого прогона, — ляжет в кэш
   // рядом с фактом и откалибрует план, когда файл изменится.
   const baselines = new Map<string, number>();
   const entries: TestEntry[] = selected.map((file) => {
     const entry = cacheFiles[file];
     const stamp = stampOf(file);
-    const tests = exact?.get(file) ?? plannedTests(entry, stamp, () => assessOf(file), cap, estimator);
+    const tests =
+      exact?.get(file) ??
+      collected.get(file) ??
+      plannedTests(entry, stamp, () => assessOf(file), cap, estimator);
     if (exact === null) {
       // Оценка того же содержимого тем же оценщиком; другим — заново.
       const sameEstimator = entry?.estimator === undefined || entry.estimator === estimator;
@@ -426,7 +547,7 @@ export const runGroups = async (options: RunGroupsOptions): Promise<void> => {
     const shown = await run(executable, [...baseArgs, '--showConfig'], 'capture', processBase);
     return shown.status === 0 ? parseShowConfigOutput(shown.stdout) : null;
   };
-  if (options.mergeCoverageTo !== undefined) {
+  if (options.mergeCoverageTo !== undefined && coverageMerge?.by === 'runner') {
     const shown = await showConfig();
     if (shown === null) {
       throw new JestGroupsError(
@@ -457,6 +578,9 @@ export const runGroups = async (options: RunGroupsOptions): Promise<void> => {
   const outside = new Set<string>();
   const oversized: string[] = [];
   const coverages: Record<string, FileCoverage>[] = [];
+  /** Покрытие, слитое самим инструментом (`coverageMerge.by === 'tool'`), и итог его порога. */
+  let toolCoverage: Record<string, FileCoverage> | undefined;
+  let toolThresholdFailed = false;
   let failedGroup = 0;
   let fatal: string | undefined;
   let interrupted: unknown;
@@ -543,21 +667,33 @@ export const runGroups = async (options: RunGroupsOptions): Promise<void> => {
             'или выключите покрытие в конфиге',
         );
       }
-      if (options.mergeCoverageTo !== undefined) {
+      if (options.mergeCoverageTo !== undefined && coverageMerge?.by === 'runner') {
         const coverage = readJsonFile<Record<string, FileCoverage>>(
-          join(coverageDir(number), 'coverage-final.json'),
+          join(coverageDir(number), coverageMerge.file),
         );
         if (coverage.kind === JSON_FILE_READ.missing) {
           throw new JestGroupsError(
-            `группа ${number}: jest не записал покрытие (coverage-final.json) — в конфиге свои coverageReporters?`,
+            `группа ${number}: ${tool.name} не записал покрытие (${coverageMerge.file}) — в конфиге свои coverageReporters?`,
           );
         }
         if (coverage.kind === JSON_FILE_READ.invalid) {
           throw new JestGroupsError(
-            `группа ${number}: покрытие coverage-final.json записано, но ${coverage.reason}`,
+            `группа ${number}: покрытие ${coverageMerge.file} записано, но ${coverage.reason}`,
           );
         }
         coverages.push(coverage.value);
+      }
+      if (options.mergeCoverageTo !== undefined && coverageMerge?.by === 'tool' && result.status === 0) {
+        // Слияние инструмента читает blob'ы из одного каталога; группа пишет свой в свой каталог.
+        const blob = join(coverageDir(number), coverageMerge.file);
+        if (!existsSync(blob)) {
+          throw new JestGroupsError(
+            `группа ${number}: ${tool.name} не записал отчёт с покрытием (${coverageMerge.file}) — ` +
+              'репортёр blob снят конфигом?',
+          );
+        }
+        mkdirSync(join(work, 'blobs'), { recursive: true });
+        renameSync(blob, join(work, 'blobs', `group-${number}.json`));
       }
       const members = new Set(group);
       const seen = new Map<string, { runs: number; tests: number; ms: number }>();
@@ -649,6 +785,70 @@ export const runGroups = async (options: RunGroupsOptions): Promise<void> => {
         }
       }
     }
+    // Слияние покрытия инструментом — пока каталог прогона цел (blob'ы групп в нём). Только
+    // после прогона без отказов: упавшие тесты слияние сочло бы своим отказом, а отчёт
+    // покрытия по части групп выглядел бы отчётом набора.
+    if (
+      coverageMerge?.by === 'tool' &&
+      options.mergeCoverageTo !== undefined &&
+      interrupted === undefined &&
+      fatal === undefined &&
+      failedGroup === 0 &&
+      reports.length > 0
+    ) {
+      const checkThreshold = reports.length === runIndices.length && partialReason === undefined;
+      if (!checkThreshold) {
+        log(`${label} порог покрытия не сверяется: прогон покрыл не весь набор`);
+      }
+      const outputDir = join(work, 'merged-coverage');
+      const mergedReportPath = join(work, 'merged-report.json');
+      const merged = await run(
+        executable,
+        coverageMerge.mergeArgs({
+          baseArgs,
+          inputsDir: join(work, 'blobs'),
+          outputDir,
+          reportPath: mergedReportPath,
+          checkThreshold,
+        }),
+        'inherit',
+        { ...processBase, ...(limits.timeoutMs === undefined ? {} : { timeoutMs: limits.timeoutMs }) },
+      );
+      if (options.signal?.aborted) {
+        interrupted = options.signal.reason;
+      } else if (merged.outcome !== undefined && merged.outcome !== PROCESS_OUTCOME.exited) {
+        // Снятое слияние — не «порог не выполнен», даже если отчёт и покрытие успели записаться.
+        fatal =
+          `слияние покрытия (${tool.name} --merge-reports) снято ` +
+          (merged.outcome === PROCESS_OUTCOME.timeout
+            ? `по потолку времени (${ENV_NAMES.TIMEOUT})`
+            : merged.outcome === PROCESS_OUTCOME.memory
+              ? `по потолку памяти (${ENV_NAMES.MAX_RSS})`
+              : `(${merged.outcome})`);
+      } else {
+        const mergedReport = readJsonFile<JestReport>(mergedReportPath);
+        const coverage = readJsonFile<Record<string, FileCoverage>>(join(outputDir, 'coverage-final.json'));
+        const testsPassed = mergedReport.kind === JSON_FILE_READ.ok && mergedReport.value.success === true;
+        if (coverage.kind !== JSON_FILE_READ.ok) {
+          fatal =
+            `слияние покрытия (${tool.name} --merge-reports) не записало coverage-final.json ` +
+            `(код ${merged.status})`;
+        } else if (merged.status === 0) {
+          toolCoverage = coverage.value;
+        } else if (checkThreshold && testsPassed) {
+          // Тесты слитого отчёта зелёные, код не 0 — это порог: его текст vitest напечатал выше.
+          toolCoverage = coverage.value;
+          toolThresholdFailed = true;
+        } else {
+          fatal =
+            `слияние покрытия (${tool.name} --merge-reports) вышло с кодом ${merged.status}` +
+            (testsPassed ? '' : ' и отчётом без успеха') +
+            ' — подробности выше';
+        }
+      }
+    } else if (coverageMerge?.by === 'tool' && options.mergeCoverageTo !== undefined && failedGroup > 0) {
+      log(`${label} покрытие не слито: упала группа ${failedGroup}`);
+    }
   } finally {
     writeTestCache(cacheDir, key, { version: 2, command, files: cacheFiles }, root);
     saveState();
@@ -676,6 +876,15 @@ export const runGroups = async (options: RunGroupsOptions): Promise<void> => {
     }
   }
   let thresholdErrors: string[] = [];
+  if (options.mergeCoverageTo !== undefined && toolCoverage !== undefined) {
+    writeAtomically(resolve(options.mergeCoverageTo), JSON.stringify(toolCoverage));
+    if (toolThresholdFailed) {
+      thresholdErrors = [
+        `порог покрытия не выполнен по слитому покрытию всех групп (${tool.name} --merge-reports) — ` +
+          'какой именно, напечатано выше',
+      ];
+    }
+  }
   if (options.mergeCoverageTo !== undefined && coverages.length > 0) {
     const coverage = mergeCoverage(coverages);
     writeAtomically(resolve(options.mergeCoverageTo), JSON.stringify(coverage));
@@ -710,24 +919,33 @@ export const runGroups = async (options: RunGroupsOptions): Promise<void> => {
     }
     throw new JestGroupsError(thresholdErrors.join('\n'), EXIT_CODE.testsFailed);
   }
+  // Отчёт, в котором файл выполнен дважды, не там или не выполнен, — не проверка выборки, даже с
+  // success=true: его удаляют вместе с JUnit и покрытием, иначе его приняли бы следующие шаги
+  // (jest-groups-merge склеил бы такой шард как полный).
+  const refuseIntegrity = (message: string): never => {
+    for (const path of outputs) {
+      rmSync(resolve(path), { force: true });
+    }
+    throw new JestGroupsError(`${message}; отчёт удалён — он не проверка выборки`);
+  };
   // Файл, выполненный в двух группах, — почти всегда позиционный путь в команде
   // после `--`: jest берёт его И пути группы и гонит файл двумя воркерами разом.
   // Спеки с общим Redis и фиксированными ключами затирают друг друга — выглядит флаком.
   if (twice.size > 0) {
-    throw new JestGroupsError(
+    refuseIntegrity(
       `файлы выполнены дважды: ${[...twice].join(', ')} — путь спеки в команде после \`--\`? ` +
         'Выборку задавайте --testPathPatterns',
     );
   }
   if (outside.size > 0) {
-    throw new JestGroupsError(
+    refuseIntegrity(
       `файлы выполнены не в своей группе: ${[...outside].join(', ')} — фильтр путей ${tool.name} ` +
         'захватил чужие файлы, группа вышла за план',
     );
   }
   const missing = runFiles.filter((file) => !executedIn.has(file));
   if (missing.length > 0) {
-    throw new JestGroupsError(`файлы выборки не выполнены ни в одной группе: ${missing.join(', ')}`);
+    refuseIntegrity(`файлы выборки не выполнены ни в одной группе: ${missing.join(', ')}`);
   }
   if (ceilingBreach !== null && options.strictCeiling !== false) {
     throw new JestGroupsError(`${ceilingBreach} (только строкой в журнале — ${ENV_NAMES.STRICT}=0)`);

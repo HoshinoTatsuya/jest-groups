@@ -1,0 +1,9 @@
+{
+  "name": "jest-groups-test-deps-vitest-5",
+  "private": true,
+  "description": "vitest 5 and its coverage provider for the package's own specs: a separate workspace package, so the provider's peer `vitest` resolves to vitest 5 and not to the root vitest 4.",
+  "devDependencies": {
+    "@vitest/coverage-v8": "5.1.0",
+    "vitest": "5.1.0"
+  }
+}

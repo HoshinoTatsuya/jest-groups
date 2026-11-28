@@ -161,6 +161,36 @@ describe('jest-groups CLI: потолок групп и очерёдность',
     expect(assert().status).toBe(0);
   });
 
+  it('отчёты всех шардов jest-groups-merge склеивает в весь набор; без одного шарда — отказ', () => {
+    const MERGE = join(__dirname, '..', '..', 'dist', 'bin', 'jest-groups-merge.js');
+    const ASSERT = join(__dirname, '..', '..', 'dist', 'bin', 'jest-assert-no-skipped.js');
+    const counts = { 'a.spec.ts': 3, 'b.spec.ts': 3, 'c.spec.ts': 2 };
+    const shards: string[] = [];
+    for (const index of [1, 2]) {
+      const result = run(counts, {}, true, ['--shard', `${index}/2`]);
+      expect(result.status).toBe(0);
+      const path = join(work, `shard-${index}.json`);
+      writeFileSync(path, readFileSync(join(work, 'merged.json')));
+      shards.push(path);
+    }
+    const merge = (...paths: string[]) =>
+      spawnSync(process.execPath, [MERGE, '--out', join(work, 'all.json'), ...paths], { encoding: 'utf8' });
+
+    const merged = merge(...shards);
+    expect({ status: merged.status, stderr: merged.stderr }).toEqual({ status: 0, stderr: '' });
+    const all = JSON.parse(readFileSync(join(work, 'all.json'), 'utf8')) as { numTotalTests: number };
+    expect(all.numTotalTests).toBe(8);
+    // Склеенный отчёт — весь набор: проверка пропусков принимает его без --allow-partial.
+    expect(spawnSync(process.execPath, [ASSERT, join(work, 'all.json')], { encoding: 'utf8' }).status).toBe(
+      0,
+    );
+
+    const one = merge(shards[0] ?? '');
+    expect(one.status).toBe(2);
+    expect(one.stderr).toContain('нет отчётов шардов 2/2');
+    expect(existsSync(join(work, 'all.json'))).toBe(false);
+  });
+
   it('группы не больше плана (285 при потолке 300); файл тяжелее — группой из одного', () => {
     // Фикстура несёт оба случая: файлы, которые ДОЛЖНЫ сложиться в группу
     // (140 + 145 = ровно план), и файлы, которые НЕ должны (146 + 140).
@@ -234,6 +264,9 @@ describe('jest-groups CLI: потолок групп и очерёдность',
     // Отказ раннера, а не упавшие тесты: свой код.
     expect(dropped.status).toBe(2);
     expect(dropped.stderr).toContain('не выполнены ни в одной группе: b.spec.ts');
+    // Отчёт без файла выборки — не проверка набора: он удалён, и склейка шардов его не примет.
+    expect(dropped.report).toBeNull();
+    expect(dropped.stderr).toContain('отчёт удалён');
   });
 
   it('упавшая группа останавливает прогон; KEEP_GOING гонит дальше', () => {
@@ -261,6 +294,7 @@ describe('jest-groups CLI: потолок групп и очерёдность',
 
     expect(result.status).toBe(2);
     expect(result.stderr).toContain('выполнены дважды: a.spec.ts');
+    expect(result.report).toBeNull();
   });
 
   it('пустая выборка — отказ, а не зелёный прогон', () => {
@@ -376,15 +410,21 @@ describe('jest-groups CLI: потолок групп и очерёдность',
     expect(existsSync(target)).toBe(false);
   });
 
-  it.each([['--maxWorkers=4'], ['-w'], ['--runInBand'], ['-i'], ['--watch'], ['--shard=1/2'], ['--json']])(
-    '%s в команде выборки — отказ до запуска: флаг задаёт раннер',
-    (flag) => {
-      const result = run({ 'a.spec.ts': 2 }, {}, true, [], [flag]);
-      expect(result.status).toBe(2);
-      expect(result.calls).toEqual([]);
-      expect(result.stderr).toContain(flag.split('=')[0] ?? flag);
-    },
-  );
+  it.each([
+    ['--maxWorkers=4'],
+    ['-w'],
+    ['--runInBand'],
+    ['-i'],
+    ['--watch'],
+    ['--shard=1/2'],
+    ['--json'],
+    ['--collectTests'],
+  ])('%s в команде выборки — отказ до запуска: флаг задаёт раннер', (flag) => {
+    const result = run({ 'a.spec.ts': 2 }, {}, true, [], [flag]);
+    expect(result.status).toBe(2);
+    expect(result.calls).toEqual([]);
+    expect(result.stderr).toContain(flag.split('=')[0] ?? flag);
+  });
 
   it('контроль: обычные флаги jest (--config, --testPathPatterns) раннер пропускает', () => {
     const result = run({ 'a.spec.ts': 2 }, {}, true, [], ['--testPathPatterns', 'a']);

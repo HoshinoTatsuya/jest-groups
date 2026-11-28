@@ -262,6 +262,20 @@ describe('потолки группы и защита машины — на на
     expect(box.events().map((entry) => entry.event)).not.toContain('self-exit');
   }, 30_000);
 
+  it('раннер убит SIGKILL (его не перехватить) — группу jest за обёрткой снимает сторож', async () => {
+    const run = box.start({
+      wrapped: true,
+      env: { FAKE_HANG: box.abs('a.spec.ts'), FAKE_IGNORE_TERM: '1', JEST_GROUP_KILL_GRACE_S: '1' },
+    });
+    await box.waitFor('hanging');
+    const jest = box.events().find((entry) => entry.event === 'hanging')?.pid ?? 0;
+    run.child.kill('SIGKILL');
+    await run.exited;
+    // Jest глух к SIGTERM: сторож обязан дойти до SIGKILL после потолка ожидания (1 с).
+    expect(await RunnerSandbox.gone(jest, 100)).toBe(true);
+    expect(box.events().map((entry) => entry.event)).not.toContain('self-exit');
+  }, 30_000);
+
   it.each([
     [['--merge-coverge', 'x'], 'неизвестный флаг раннера «--merge-coverge»'],
     [['--shard', '3/2'], '--shard 3/2'],

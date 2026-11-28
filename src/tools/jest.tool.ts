@@ -12,12 +12,12 @@ import { withoutFlag } from './without-flag';
 export const JEST_TOOL: ToolAdapter = {
   name: 'jest',
   owned: {
-    long: ['maxworkers', 'runinband', 'watch', 'watchall', 'shard', 'json', 'outputfile'],
+    long: ['maxworkers', 'runinband', 'watch', 'watchall', 'shard', 'json', 'outputfile', 'collecttests'],
     short: ['w', 'i'],
     words: [],
   },
   coverageFlag: /^--(?:coverage|collectCoverage|collect-coverage)(?:=(?:true|1))?$/,
-  mergesCoverage: true,
+  coverageMerge: { by: 'runner', file: 'coverage-final.json' },
   listsTests: false,
   listOkStatuses: [0],
   supportsChangedSince: true,

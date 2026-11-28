@@ -206,4 +206,60 @@ describe('раннер на настоящем jest', () => {
       (JSON.parse(readFileSync(join(work, 'r.json'), 'utf8')) as { numTotalTests: number }).numTotalTests,
     ).toBe(6);
   }, 60_000);
+
+  describe('--collect-tests: файлы без доказанного числа считает сам jest', () => {
+    /** Тесты строит функция из другого модуля: по тексту число не доказать. Тела пишут в ran.log. */
+    const generated = (file: string, count: number): void => {
+      write(
+        `test/${file}.cases.js`,
+        `module.exports = () => Array.from({ length: ${count} }, (_, i) => i);\n`,
+      );
+      write(
+        `test/${file}.spec.js`,
+        `const cases = require('./${file}.cases');\nfor (const n of cases()) it('case ' + n, () => require('fs').appendFileSync(${JSON.stringify(join(work, 'ran.log'))}, 'x'));\n`,
+      );
+    };
+    const ran = (): number =>
+      existsSync(join(work, 'ran.log')) ? readFileSync(join(work, 'ran.log'), 'utf8').length : 0;
+    const roomy = { JEST_GROUP_MAX_TESTS: '300' };
+
+    it('контроль: без флага каждый такой файл идёт полной группой — по группе на файл', () => {
+      config({});
+      generated('a', 7);
+      generated('b', 5);
+      const result = runner([], [], roomy);
+
+      expect(result.status).toBe(0);
+      expect(groupLines(result.stdout)).toHaveLength(2);
+    }, 60_000);
+
+    it('с флагом — точные числа до прогона: одна группа, тела тестов выполнены ровно по разу', () => {
+      config({});
+      generated('a', 7);
+      generated('b', 5);
+      const result = runner(['--collect-tests'], [], roomy);
+
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain('без выполнения сосчитаны тесты файлов: 2 из 2');
+      expect(groupLines(result.stdout)).toHaveLength(1);
+      expect(result.stdout).toContain('тестов 12 (план 12)');
+      // Подсчёт не выполняет тела: каждое — один раз, в своей группе.
+      expect(ran()).toBe(12);
+    }, 60_000);
+
+    it('файл, который не загрузился при подсчёте, планируется прежним способом, и это названо', () => {
+      config({});
+      generated('a', 7);
+      write('test/broken.cases.js', "throw new Error('сломан');\n");
+      write(
+        'test/broken.spec.js',
+        "const cases = require('./broken.cases');\nfor (const n of cases()) it(String(n), () => {});\n",
+      );
+      const result = runner(['--collect-tests'], [], roomy);
+
+      expect(result.stdout).toContain('без выполнения сосчитаны тесты файлов: 1 из 2');
+      // Сломанный файл падает уже в своей группе — как без подсчёта.
+      expect(result.status).toBe(1);
+    }, 60_000);
+  });
 });

@@ -8,5 +8,6 @@ export interface RunnerArgs {
   readonly shard?: { readonly index: number; readonly count: number };
   readonly fromGroup?: number;
   readonly failedOnly: boolean;
+  readonly collectTests: boolean;
   readonly command: readonly string[];
 }

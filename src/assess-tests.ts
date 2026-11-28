@@ -4,6 +4,7 @@ import { GROUP_DEFAULTS } from './constants/group-defaults.constant';
 import { TYPESCRIPT_API_MEMBERS } from './constants/typescript-api-members.constant';
 import { isTypescriptApi } from './is-typescript-api';
 import { JestGroupsError } from './jest-groups.error';
+import { repeatsTestCalls } from './repeats-test-calls';
 import type { TestAssessment } from './types/test-assessment.type';
 import type { TypescriptApi } from './types/typescript-api.type';
 
@@ -11,7 +12,6 @@ const TEST_CALLEES: ReadonlySet<string> = new Set(['it', 'test', 'xit', 'fit', '
 const ITERATING_METHODS: ReadonlySet<string> = new Set(['forEach', 'map', 'flatMap']);
 // Те же имена, что TEST_CALLEES: прежде xit/fit/xtest регулярка не видела вовсе.
 const FALLBACK_TEST_CALL = /\b(?:[xf]?it|x?test)(?:\.\w+)*\s*\(/g;
-const FALLBACK_UNKNOWN_REPEAT = /\.each\b/;
 
 /**
  * Оценка числа тестов файла по тексту и то, доказана ли она текстом.
@@ -24,8 +24,8 @@ const FALLBACK_UNKNOWN_REPEAT = /\.each\b/;
  * в 5 тестов. `let`, имя, объявленное в файле дважды, `.filter` и распаковка
  * неизвестного — не доказуемы: оценка повторов и `certain: false`.
  *
- * Без TypeScript (его нет в проекте) — подсчёт вызовов регуляркой; `.each`
- * или ни одного вызова — `certain: false`.
+ * Без TypeScript (его нет в проекте) — подсчёт вызовов регуляркой; `.each`, цикл с вызовом
+ * теста внутри (`repeatsTestCalls`) или ни одного вызова — `certain: false`.
  *
  * `typescript` — JS API (5.x, 6.x, `@typescript/typescript6`); модуль без
  * него (главный вход TypeScript 7) — отказ с объяснением, а не TypeError на
@@ -34,7 +34,7 @@ const FALLBACK_UNKNOWN_REPEAT = /\.each\b/;
 export const assessTests = (typescript: TypescriptApi | null, path: string, text: string): TestAssessment => {
   if (typescript === null) {
     const calls = (text.match(FALLBACK_TEST_CALL) ?? []).length;
-    return { tests: Math.max(1, calls), certain: calls > 0 && !FALLBACK_UNKNOWN_REPEAT.test(text) };
+    return { tests: Math.max(1, calls), certain: calls > 0 && !repeatsTestCalls(text) };
   }
   if (!isTypescriptApi(typescript)) {
     const version = (typescript as { version?: unknown }).version;

@@ -1,3 +1,4 @@
+import type { CoverageMerge } from './coverage-merge.type';
 import type { JestReport } from './jest-report.type';
 import type { JsonFileRead } from './json-file-read.type';
 import type { ToolName } from './tool-name.type';
@@ -31,8 +32,8 @@ export interface ToolAdapter {
   readonly readReport?: (path: string, root: string) => JsonFileRead<JestReport>;
   /** Флаг покрытия в команде выборки (без слияния каждая группа затёрла бы предыдущую). */
   readonly coverageFlag: RegExp;
-  /** Умеет ли раннер сливать покрытие групп этого инструмента. */
-  readonly mergesCoverage: boolean;
+  /** Как сливается покрытие групп этого инструмента; null — `--merge-coverage` не поддержан. */
+  readonly coverageMerge: CoverageMerge | null;
   /** Число копий файла (проекты) видно в самой выборке. */
   readonly listsCopies: boolean;
   readonly listArgs: (baseArgs: readonly string[], workers: number, changedSince?: string) => string[];

@@ -17,6 +17,7 @@ describe('parseRunnerArgs', () => {
         'main',
         '--shard=2/4',
         '--dry-run',
+        '--collect-tests',
         '--',
         'jest',
         '--config',
@@ -30,6 +31,7 @@ describe('parseRunnerArgs', () => {
       shard: { index: 2, count: 4 },
       dryRun: true,
       failedOnly: false,
+      collectTests: true,
       command: ['jest', '--config', 'x'],
     });
   });
@@ -82,9 +84,44 @@ describe('readBoundedInt и пределы переменных', () => {
   });
 
   it('потолок памяти выше физической — отказ', () => {
-    expect(() => readEnvOptions({ JEST_GROUP_MAX_RSS_MB: String(1024 * 1024) }, 'linux')).toThrow(
-      'не больше физической памяти',
+    const machine = { bytes: 16 * 1024 ** 3, source: 'machine' } as const;
+    expect(() => readEnvOptions({ JEST_GROUP_MAX_RSS_MB: '16385' }, 'linux', machine)).toThrow(
+      'не больше физической памяти (16384 МБ)',
     );
+  });
+
+  it('в контейнере с пределом cgroup потолок и порог свободной памяти — от предела, а не от хоста', () => {
+    const MB = 1024 * 1024;
+    // Хост 64 ГБ, контейнер 4 ГБ: от хоста потолок группы был бы 32 ГБ (контейнер убьёт OOM
+    // раньше), порог свободной памяти — 6,4 ГБ (в контейнере его не бывает, ожидание до отказа).
+    const cgroup = { bytes: 4096 * MB, source: 'cgroup' } as const;
+    const options = readEnvOptions({}, 'linux', cgroup);
+    expect({ maxRssBytes: options.limits?.maxRssBytes, minFreeBytes: options.machine?.minFreeBytes }).toEqual(
+      {
+        maxRssBytes: 2048 * MB,
+        minFreeBytes: 1024 * MB,
+      },
+    );
+    expect(() => readEnvOptions({ JEST_GROUP_MAX_RSS_MB: '4097' }, 'linux', cgroup)).toThrow(
+      'не больше предела памяти контейнера (cgroup) (4096 МБ), получено 4097',
+    );
+    expect(readEnvOptions({ JEST_GROUP_MAX_RSS_MB: '4096' }, 'linux', cgroup).limits?.maxRssBytes).toBe(
+      4096 * MB,
+    );
+  });
+
+  it.each([
+    [1024, 256],
+    [512, 128],
+    [8192, 1024],
+  ])('контейнер %i МБ: порог свободной памяти %i МБ — меньше предела, достижим', (limitMb, freeMb) => {
+    const MB = 1024 * 1024;
+    const options = readEnvOptions({}, 'linux', { bytes: limitMb * MB, source: 'cgroup' });
+    expect(options.machine?.minFreeBytes).toBe(freeMb * MB);
+    // Машина без предела — прежнее правило: не меньше 1 ГБ.
+    expect(
+      readEnvOptions({}, 'linux', { bytes: limitMb * MB, source: 'machine' }).machine?.minFreeBytes,
+    ).toBe(Math.max(1024, Math.floor(limitMb * 0.1)) * MB);
   });
 
   it('значения по умолчанию — обещания раннера и защиты машины', () => {

@@ -25,7 +25,7 @@ export const PYTEST_TOOL: ToolAdapter = {
     words: [],
   },
   coverageFlag: /^--cov(?:=.*)?$/,
-  mergesCoverage: false,
+  coverageMerge: null,
   listsTests: true,
   listOkStatuses: [0, 5],
   supportsChangedSince: false,

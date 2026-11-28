@@ -56,6 +56,14 @@ export interface RunGroupsOptions {
   readonly changedSince?: string;
   /** Шард CI (с 1): план делится детерминированно по оценке из текста. */
   readonly shard?: { readonly index: number; readonly count: number };
+  /**
+   * Сосчитать тесты файлов без истории, чьё число текст не доказывает (тесты строит функция,
+   * таблица из импорта), самим jest — `--collectTests` (jest 30.4+). Как при прогоне, выполняются
+   * среда тестов, `setupFiles`, `setupFilesAfterEnv` и верхний уровень спек; `globalSetup`, тела
+   * тестов и хуки — нет; покрытие не собирается. Без этого такой файл планируется полной группой
+   * и идёт один. Только jest; с `dryRun` пропускается.
+   */
+  readonly collectTests?: boolean;
   /** Возобновление по состоянию прошлого прогона той же команды. */
   readonly resume?: { readonly fromGroup?: number; readonly failedOnly?: boolean };
   /** Потолки процесса группы. */

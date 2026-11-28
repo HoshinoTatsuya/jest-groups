@@ -1,4 +1,5 @@
 import { spawn, type spawnSync } from 'node:child_process';
+import { PassThrough } from 'node:stream';
 
 import { RunnerSandbox } from '../testing/runner-sandbox';
 import type { RunTool } from '../types/run-tool.type';
@@ -7,6 +8,8 @@ import { isProcessGroupAlive } from './is-process-group-alive';
 import { needsShell } from './needs-shell';
 import { quoteCmdArgument } from './quote-cmd-argument';
 import { readGroupRss } from './read-group-rss';
+import { runWatchdog } from './run-watchdog';
+import { signalGroupQuietly } from './signal-group-quietly';
 import { signalProcessGroup } from './signal-process-group';
 
 /**
@@ -94,6 +97,19 @@ describe('signalProcessGroup', () => {
       throw Object.assign(new Error('нельзя'), { code: 'EPERM' });
     });
     expect(() => signalProcessGroup(4242, 'SIGTERM', 'darwin')).toThrow('нельзя');
+  });
+
+  it('уборка: EPERM (macOS — в группе одни зомби) не роняет уборку; прочие ошибки — пробрасываются', () => {
+    const kill = jest.spyOn(process, 'kill').mockImplementation(() => {
+      throw Object.assign(new Error('нельзя'), { code: 'EPERM' });
+    });
+    expect(() => signalGroupQuietly(4242, 'SIGKILL')).not.toThrow();
+    expect(kill).toHaveBeenCalledWith(-4242, 'SIGKILL');
+    kill.mockImplementation(() => {
+      throw Object.assign(new Error('сломано'), { code: 'EINVAL' });
+    });
+    expect(() => signalGroupQuietly(4242, 'SIGKILL')).toThrow('сломано');
+    expect(() => signalGroupQuietly(-1, 'SIGKILL')).toThrow(RangeError);
   });
 
   // 16.11.2026 сентинел `pid ?? -1` под мутантом стал `kill(-1, 'SIGTERM')`:
@@ -209,4 +225,52 @@ describe('readGroupRss', () => {
     },
     20_000,
   );
+});
+
+describe('runWatchdog', () => {
+  /** Настоящая группа процессов: `sleep` во главе своей группы (detached). */
+  const group = (): number => {
+    const child = spawn('sleep', ['30'], { detached: true, stdio: 'ignore' });
+    child.unref();
+    if (child.pid === undefined) {
+      throw new Error('sleep не запустился');
+    }
+    return child.pid;
+  };
+  const gone = async (pgid: number): Promise<boolean> => {
+    for (let attempt = 0; attempt < 40 && isProcessGroupAlive(pgid); attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    return !isProcessGroupAlive(pgid);
+  };
+
+  it('конец канала раннера — сторож снимает зарегистрированные группы, а снятые раннером не трогает', async () => {
+    const kept = group();
+    const released = group();
+    try {
+      const input = new PassThrough();
+      const done = runWatchdog(input, 20);
+      input.write(`+ ${kept} 200\n+ ${released} 200\n- ${released}\n`);
+      input.end();
+      await done;
+      expect(await gone(kept)).toBe(true);
+      expect(isProcessGroupAlive(released)).toBe(true);
+    } finally {
+      for (const pgid of [kept, released]) {
+        signalProcessGroup(pgid, 'SIGKILL');
+      }
+    }
+  });
+
+  it('строки с pid, не адресующим одну группу (0, ±1, не целые), пропускаются — до kill() не доходят', async () => {
+    const input = new PassThrough();
+    const done = runWatchdog(input, 20);
+    // Подменён: при сломанной защите сигнал не уйдёт настоящему процессу машины.
+    const kill = jest.spyOn(process, 'kill').mockImplementation(() => true);
+    input.write('+ 0 10\n+ 1 10\n+ -1 10\n+ -4242 10\n+ 1.5 10\n+ abc 10\n');
+    input.end();
+    await expect(done).resolves.toBeUndefined();
+    // Ни одна строка не стала сигналом: ни группе, ни одиночному процессу.
+    expect(kill).not.toHaveBeenCalled();
+  });
 });

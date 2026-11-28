@@ -1,6 +1,6 @@
 {
   "name": "@hoshinotatsuya/jest-groups",
-  "version": "0.8.1",
+  "version": "0.9.0",
   "description": "Run jest, vitest and pytest suites in sequential groups (at most 300 tests and 2 workers per group) with one merged report, machine protection and a no-skipped-tests check.",
   "keywords": [
     "jest",
@@ -38,6 +38,7 @@
     "jest-groups": "./dist/bin/jest-groups.js",
     "vitest-groups": "./dist/bin/vitest-groups.js",
     "jest-assert-no-skipped": "./dist/bin/jest-assert-no-skipped.js",
+    "jest-groups-merge": "./dist/bin/jest-groups-merge.js",
     "pytest-groups": "./dist/bin/pytest-groups.js"
   },
   "files": [
@@ -87,13 +88,13 @@
     "@types/jest": "30.0.0",
     "@types/node": "24.0.15",
     "@typescript/typescript6": "6.0.2",
+    "@vitest/coverage-v8": "4.1.11",
     "jest": "30.5.2",
     "rimraf": "6.1.3",
     "ts-jest": "29.4.5",
     "typescript": "5.9.3",
     "typescript-6": "npm:typescript@6.0.3",
     "typescript-7": "npm:typescript@7.0.2",
-    "vitest": "4.1.11",
-    "vitest-5": "npm:vitest@5.1.0"
+    "vitest": "4.1.11"
   }
 }
